@@ -1,6 +1,10 @@
 ﻿@using Redot_Documentation.Services
 @using Redot_Documentation.Versioning
+@using Redot_Documentation.ClassDocumentation
+@implements IDisposable
 @inject VersionManagerService VersionManagerService
+@inject NavigationManager NavigationManager
+@inject ClassDocumentationCatalog ClassDocumentationCatalog
 @rendermode InteractiveServer
 
 <div class="top-row ps-3 navbar navbar-dark">
@@ -25,10 +29,10 @@
             </NavLink>
 
             <label class="version-label" for="version-selector">Version</label>
-            <select id="version-selector" class="version-select" @onchange="OnVersionChanged" value="@_selectedVersion">
-                @foreach (string version in _availableVersions)
+            <select id="version-selector" class="version-select" @onchange="OnVersionChanged" value="@_selectedVersionSlug">
+                @foreach (DocumentationVersion version in _availableVersions)
                 {
-                    <option value="@version">@version</option>
+                    <option value="@version.Slug">@version.FriendlyName</option>
                 }
             </select>
 
@@ -45,6 +49,27 @@
                     <NavSectionTree Section="section" BuildArticleLink="GetArticleLink" Level="0" />
                 }
             }
+
+            <details class="nav-section nav-classes-section" open="@IsClassesRoute()" style="--section-level: 0;">
+                <summary class="nav-section-summary">
+                    <span class="nav-section-disclosure" aria-hidden="true">›</span>
+                    <NavLink class="nav-link nav-section-link" href="@GetClassesLink()">
+                        Classes
+                    </NavLink>
+                </summary>
+
+                <div class="nav-section-children nav-classes-list">
+                    @foreach (ClassDocumentationEntry classDocumentation in _classes)
+                    {
+                        <a @key="classDocumentation.Name"
+                           class="nav-link nav-article-link nav-class-link"
+                           href="@ClassDocumentationRenderer.ClassPath(_selectedVersionSlug, classDocumentation.Name)"
+                           style="--section-level: 1;">
+                            @classDocumentation.Name
+                        </a>
+                    }
+                </div>
+            </details>
         </div>
 
 
@@ -52,24 +77,25 @@
 </div>
 
 @code {
-    private string[] _availableVersions = [];
-    private string _selectedVersion = "latest";
-    private IRanking[] _rankings = [];
+    private IReadOnlyList<DocumentationVersion> _availableVersions = [];
+    private string _selectedVersionSlug = string.Empty;
+    private VersionProvider? _selectedVersionProvider;
+    private IReadOnlyList<IRanking> _rankings = [];
+    private IReadOnlyList<ClassDocumentationEntry> _classes = [];
+    private bool _disposed;
 
     protected override void OnInitialized()
     {
+        ClassDocumentationCatalog.Changed += OnCatalogChanged;
         _availableVersions = VersionManagerService.Versions;
-        if (_availableVersions.Length == 0)
+        if (_availableVersions.Count == 0)
         {
             _rankings = [];
             return;
         }
 
-        _selectedVersion = _availableVersions.Contains("latest")
-            ? "latest"
-            : _availableVersions[0];
-
-        LoadRankings();
+        SelectVersionFromLocation();
+        NavigationManager.LocationChanged += OnLocationChanged;
     }
 
     private void OnVersionChanged(ChangeEventArgs changeEventArgs)
@@ -78,27 +104,137 @@
         if (string.IsNullOrWhiteSpace(selectedVersion))
             return;
 
-        _selectedVersion = selectedVersion;
+        _selectedVersionSlug = selectedVersion;
         LoadRankings();
+
+        NavigationManager.NavigateTo(GetVersionSwitchPath(_selectedVersionProvider!));
     }
 
     private void LoadRankings()
     {
-        VersionProvider versionProvider = VersionManagerService.GetVersionProvider(_selectedVersion);
-        versionProvider.SortRankings();
-        _rankings = versionProvider.GetSortedRankings();
+        _selectedVersionProvider = VersionManagerService.GetVersionProvider(_selectedVersionSlug);
+        _rankings = _selectedVersionProvider.GetSortedRankings();
+        _classes = ClassDocumentationCatalog.GetClassesAlphabetically(_selectedVersionSlug);
     }
 
-    private static string GetArticleLink(Article article)
+    private string GetArticleLink(Article article)
     {
-        string normalizedPath = article.Path.Replace("\\", "/");
-        if (normalizedPath.StartsWith("./docs/", StringComparison.OrdinalIgnoreCase))
-            normalizedPath = normalizedPath[7..];
+        string normalizedPath = _selectedVersionProvider!.GetReferentialPath(article.Path);
 
         if (normalizedPath.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
             normalizedPath = normalizedPath[..^3];
 
-        return $"en/{normalizedPath}";
+        return normalizedPath;
+    }
+
+    private void SelectVersionFromLocation()
+    {
+        string relativePath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        string pathWithoutQueryOrFragment = relativePath.Split(['?', '#'], 2)[0].Trim('/');
+        string[] segments = pathWithoutQueryOrFragment.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        VersionProvider? provider = null;
+        if (segments.Length >= 2 && string.Equals(segments[0], "en", StringComparison.OrdinalIgnoreCase))
+            VersionManagerService.TryGetVersionProvider(segments[1], out provider);
+
+        _selectedVersionSlug = provider?.Version.Slug ?? VersionManagerService.LatestStableVersion.Slug;
+        LoadRankings();
+    }
+
+    private string GetVersionLandingPath(VersionProvider provider)
+    {
+        Article? landingArticle = provider.VersionedDocsSection is null
+            ? null
+            : FindFirstArticle(provider.VersionedDocsSection);
+
+        return landingArticle is null
+            ? $"/en/{provider.Version.Slug}/"
+            : GetArticleLink(landingArticle);
+    }
+
+    private string GetClassesLink()
+        => string.IsNullOrWhiteSpace(_selectedVersionSlug)
+            ? "/en/"
+            : $"/en/{Uri.EscapeDataString(_selectedVersionSlug)}/Classes";
+
+    private bool IsClassesRoute()
+    {
+        string relativePath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        string[] segments = relativePath.Split(['?', '#'], 2)[0]
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length >= 3
+            && string.Equals(segments[0], "en", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(segments[1], _selectedVersionSlug, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(segments[2], "Classes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetVersionSwitchPath(VersionProvider provider)
+    {
+        string relativePath = NavigationManager.ToBaseRelativePath(NavigationManager.Uri);
+        string[] segments = relativePath.Split(['?', '#'], 2)[0]
+            .Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length >= 3
+            && string.Equals(segments[0], "en", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(segments[2], "Classes", StringComparison.OrdinalIgnoreCase))
+        {
+            if (segments.Length >= 4)
+            {
+                string className = Uri.UnescapeDataString(segments[3]);
+                if (ClassDocumentationCatalog.TryGetClass(provider.Version.Slug, className, out _))
+                    return ClassDocumentationRenderer.ClassPath(provider.Version.Slug, className);
+            }
+
+            return $"/en/{Uri.EscapeDataString(provider.Version.Slug)}/Classes";
+        }
+
+        return GetVersionLandingPath(provider);
+    }
+
+    private static Article? FindFirstArticle(Section section)
+    {
+        if (section.IndexArticle is not null)
+            return section.IndexArticle;
+
+        foreach (IRanking ranking in section.GetSortedRankings())
+        {
+            if (ranking is Article article)
+                return article;
+
+            if (ranking is Section subsection && FindFirstArticle(subsection) is Article subsectionArticle)
+                return subsectionArticle;
+        }
+
+        return null;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs locationChangedEventArgs)
+    {
+        _ = InvokeAsync(() =>
+        {
+            SelectVersionFromLocation();
+            StateHasChanged();
+        });
+    }
+
+    private void OnCatalogChanged(string versionSlug)
+    {
+        _ = InvokeAsync(() =>
+        {
+            if (_disposed || !string.Equals(versionSlug, _selectedVersionSlug, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            _classes = ClassDocumentationCatalog.GetClassesAlphabetically(_selectedVersionSlug);
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        ClassDocumentationCatalog.Changed -= OnCatalogChanged;
+        NavigationManager.LocationChanged -= OnLocationChanged;
     }
 
     private static string NormalizeArticleName(string articleName)

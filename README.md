@@ -23,10 +23,30 @@ dotnet run --project Redot-Documentation/Redot-Documentation.csproj
 ```
 Note that after you have built the project at least once, you can skip the `dotnet restore` and `dotnet build` steps.
 
+### Documentation versions
+
+Documentation versions are configured in `Redot-Documentation/docs/Versions.json`. Each entry contains:
+
+- `Slug`: Stable URL and local directory identifier, such as `26.1`.
+- `FriendlyName`: Label shown in the version selector.
+- `BranchName`: Git branch associated with the documentation version.
+- `IsLatestStable`: Selects the version used for unversioned documentation routes.
+- `IsNextPrerelease`: Identifies the upcoming prerelease documentation.
+
+Exactly one entry must be marked as the latest stable version and exactly one as the next prerelease. The same entry cannot hold both roles.
+
+### Class reference synchronization
+
+The Classes section is generated from the XML class reference in the Redot Engine repository. At startup, the application loads valid cached snapshots and starts a shallow, partial Git checkout of `doc/classes` for every branch configured in `Versions.json` in the background. Snapshots are cached under `Redot-Documentation/App_Data/class-docs` and checked for upstream changes every 24 hours. If Git is temporarily unavailable, the application continues with the last valid cache; without a cache, class documentation remains unavailable until a synchronization succeeds.
+
+The repository URL, source path, cache path, refresh interval, and Git timeout are configured in the `ClassDocumentation` section of `Redot-Documentation/appsettings.json`. Set `ClassDocumentation__Enabled=false` to disable synchronization for an offline development session. Git must be installed on the host.
+
+`/health/class-docs` reports the active commit and class count for each documentation version and returns HTTP 503 if any configured version has no usable snapshot.
+
 ---
 
 ### Docker
-We plan to add a docker file soon for those that want to preview their changes that either don't have the .NET 10 SDK installed or that just want to work on the markdown and not touch the ASP.NET code.
+The included Dockerfile installs Git and declares `/app/App_Data/class-docs` as the persistent class-reference cache volume. Persist that volume between container replacements to avoid downloading every configured branch after each deployment.
 
 ---
 

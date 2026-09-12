@@ -48,7 +48,9 @@
 
 .nav-item {
     font-size: 0.9rem;
+    min-width: 0;
     padding-bottom: 0.5rem;
+    width: 100%;
 }
 
 .version-label {
@@ -108,6 +110,8 @@
 }
 
 .nav-item ::deep .nav-section-summary {
+    align-items: center;
+    display: flex;
     list-style: none;
 }
 
@@ -115,18 +119,50 @@
     display: none;
 }
 
-.nav-item ::deep .nav-section-link {
+.nav-item ::deep .nav-section-summary > .nav-section-link {
     font-weight: 600;
-    padding-left: 0.75rem;
+    padding-left: 0.25rem;
+    width: calc(100% - 1.5rem);
 }
 
 .nav-item ::deep .nav-section-no-index {
     color: #d7d7d7;
-    cursor: default;
+    cursor: pointer;
 }
 
 .nav-item ::deep .nav-section-children {
     margin-left: 0.2rem;
+}
+
+.nav-item ::deep .nav-classes-list {
+    max-height: min(65vh, 48rem);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.nav-item ::deep .nav-section-disclosure {
+    color: #d7d7d7;
+    cursor: pointer;
+    flex: 0 0 1.5rem;
+    font-size: 1.25rem;
+    pointer-events: none;
+    text-align: center;
+    transition: transform 120ms ease-in-out;
+}
+
+.nav-item ::deep .nav-section[open] > .nav-section-summary > .nav-section-disclosure {
+    transform: rotate(90deg);
+}
+
+.nav-item ::deep .nav-class-link {
+    font-family: Consolas, "Cascadia Code", "Fira Code", "JetBrains Mono", Menlo, Monaco, "Courier New", monospace;
+    font-size: 0.82rem;
+    height: auto;
+    min-height: 3rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
 }
 
 .nav-scrollable {
